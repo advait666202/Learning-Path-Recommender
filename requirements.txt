@@ -1,0 +1,10 @@
+# Personalized Learning Path Recommender — pinned dependencies.
+# Target: Python 3.11 (provisioned via `uv python install 3.11`).
+# Plain-pip users: python -m venv .venv && pip install -r requirements.txt
+
+streamlit==1.39.0
+plotly==5.24.1
+networkx==3.3
+pandas==2.2.3
+numpy==1.26.4
+scipy==1.13.1

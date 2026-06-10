@@ -1,0 +1,18 @@
+# Streamlit theme — Linear dark canvas (see DESIGN-linear.app.md).
+# Pragmatic fidelity: native theming carries the palette + dark base; the rest
+# of the Linear look (card surfaces, hairlines, Inter) is layered via
+# assets/theme.css injected from app.py.
+
+[theme]
+base = "dark"
+primaryColor = "#5e6ad2"          # Linear lavender-blue
+backgroundColor = "#010102"       # canvas (near-pure black, faint blue tint)
+secondaryBackgroundColor = "#0f1011"  # surface-1 (cards, sidebar)
+textColor = "#f7f8f8"             # ink
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

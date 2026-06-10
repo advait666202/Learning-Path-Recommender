@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+uv.lock
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated artifacts are kept (committed) so the app + cloud deploy work
+# out of the box: data/students.csv, data/concept_graph.gpickle, models/q_table.pkl
