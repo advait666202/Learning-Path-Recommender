@@ -446,11 +446,11 @@ def slide_results(prs):
     eyebrow(s, "Results & Metrics")
     title(s, "Does it actually learn?  Yes.")
     kpis = [
-        ("Reward: early → converged", "2.36 → 9.82"),
-        ("Path completion rate", "97.3%"),
-        ("Policy stability", "98.6%"),
-        ("Mastery rate (≥ Proficient)", "52%"),
-        ("Reco. accuracy (RL≡MCDM proxy)", "48%"),
+        ("Reward: early → converged", "1.54 → 8.49"),
+        ("Path completion rate", "92%"),
+        ("Policy stability", "98%"),
+        ("Mastery rate (≥50% concepts)", "31%"),
+        ("Reco. accuracy (RL≡MCDM proxy)", "51%"),
         ("State space", "288"),
     ]
     x0, y0 = CONTENT_LEFT, Emu(2150000)
@@ -472,13 +472,14 @@ def slide_results(prs):
         set_run(p.add_run(), val, 30, INK, bold=True, spacing=-1.0)
     notes(s,
           "Yes — measured with precisely-defined metrics, not a vague accuracy. Mean "
-          "episodic reward rose from 2.36 (early, exploratory) to 9.82 (converged) — a "
+          "episodic reward rose from 1.54 (early, exploratory) to 8.49 (converged) — a "
           "clear learning curve produced by a deliberately tight 22-step budget that "
-          "forces efficiency. The greedy policy reaches the objective on 97.3% of paths, "
-          "and 98.6% of states have a stable greedy action across the last checkpoints. "
-          "Recommendation Accuracy — our stated RL-vs-MCDM agreement proxy — is 48%, the "
+          "forces efficiency. The greedy policy reaches the objective on ~92% of paths, "
+          "and ~98% of states have a stable greedy action across the last checkpoints. "
+          "Recommendation Accuracy — our stated RL-vs-MCDM agreement proxy — is ~51%, the "
           "point being that MCDM genuinely re-ranks about half the time, so the "
-          "instructor's weights matter. Mastery rate is a balanced 52%.")
+          "instructor's weights matter. Mastery rate (students past 50% of the "
+          "curriculum) is about 31%.")
 
 
 def slide_conclusion(prs):

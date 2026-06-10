@@ -30,8 +30,9 @@ from utils.config import (
 # ---------------------------------------------------------------------------
 _LINEAR_TEMPLATE = go.layout.Template(
     layout=go.Layout(
-        paper_bgcolor=COLORS["canvas"],
-        plot_bgcolor=COLORS["surface_1"],
+        # Transparent so the dark canvas / card surface shows through (design spec).
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color=COLORS["ink"], family="Inter, SF Pro Display, system-ui, sans-serif", size=13),
         title=dict(font=dict(color=COLORS["ink"], size=18)),
         colorway=CHART_SEQUENCE,
@@ -356,3 +357,200 @@ def epsilon_decay_figure(history: dict) -> go.Figure:
                                line=dict(color=COLORS["primary"], width=2.5)))
     fig.update_layout(xaxis_title="Episode", yaxis_title="Epsilon (exploration rate)")
     return _base(fig, title="Epsilon Decay Schedule")
+
+
+# ===========================================================================
+# Additions for the design-spec page layouts.
+# ===========================================================================
+_TRACKS = ["Foundations", "Programming", "CS Theory", "Data/ML"]
+
+
+def mastery_histogram_figure(df: pd.DataFrame) -> go.Figure:
+    """P1: continuous histogram of current mastery across the cohort."""
+    fig = go.Figure(go.Histogram(
+        x=df["Current_Mastery"], nbinsx=24,
+        marker=dict(color=COLORS["primary"], line=dict(color=COLORS["canvas"], width=1)),
+    ))
+    fig.update_layout(xaxis_title="Current mastery (0–1)", yaxis_title="Students",
+                      bargap=0.04)
+    return _base(fig, title="Mastery Distribution")
+
+
+def learning_overview_figure(df: pd.DataFrame) -> go.Figure:
+    """P1: mean mastery as the cohort advances through the curriculum."""
+    pos = C.topological_position()
+    tmp = df.copy()
+    tmp["_pos"] = tmp["Concept_Current"].map(lambda n: pos[C.concept_index(n)])
+    grouped = tmp.groupby("_pos").agg(
+        mastery=("Current_Mastery", "mean"),
+        growth=("Mastery_Growth", "mean"),
+    ).reset_index().sort_values("_pos")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=grouped["_pos"], y=grouped["mastery"], mode="lines+markers",
+                             name="Avg mastery", line=dict(color=COLORS["primary"], width=2.5),
+                             marker=dict(size=6)))
+    fig.add_trace(go.Scatter(x=grouped["_pos"], y=grouped["growth"], mode="lines",
+                             name="Avg growth", line=dict(color=COLORS["primary_hover"],
+                                                          width=2, dash="dash")))
+    fig.update_layout(xaxis_title="Curriculum position (topological)",
+                      yaxis_title="Mastery", legend=dict(orientation="h"))
+    return _base(fig, title="Learning Overview")
+
+
+def _track_profile(row: pd.Series) -> list[float]:
+    """Per-track progress (0–1), blended lightly with current mastery."""
+    pos = C.topological_position()
+    cur_pos = pos[C.concept_index(row["Concept_Current"])]
+    cm = float(row["Current_Mastery"])
+    out = []
+    for t in _TRACKS:
+        ids = [c["id"] for c in C.CONCEPTS if c["track"] == t]
+        done = sum(1 for i in ids if pos[i] < cur_pos)
+        frac = done / len(ids) if ids else 0.0
+        out.append(round(min(1.0, frac * (0.5 + 0.5 * cm)), 3))
+    return out
+
+
+def mastery_radar_figure(row: pd.Series) -> go.Figure:
+    """P2: a student's mastery profile across the four curriculum tracks."""
+    vals = _track_profile(row)
+    fig = go.Figure(go.Scatterpolar(
+        r=vals + [vals[0]], theta=_TRACKS + [_TRACKS[0]], fill="toself",
+        line=dict(color=COLORS["primary"]),
+        fillcolor="rgba(94,106,210,0.25)",
+    ))
+    fig.update_layout(polar=dict(
+        bgcolor="rgba(0,0,0,0)",
+        radialaxis=dict(range=[0, 1], gridcolor=COLORS["hairline"], tickfont=dict(color=COLORS["ink_subtle"])),
+        angularaxis=dict(gridcolor=COLORS["hairline"], tickfont=dict(color=COLORS["ink_muted"])),
+    ))
+    return _base(fig, height=380, title="Mastery Profile by Track")
+
+
+def progress_timeline_figure(row: pd.Series) -> go.Figure:
+    """P2/P6: the student's path so far with an implied mastery ramp."""
+    order = C.topological_order()
+    cur_pos = C.topological_position()[C.concept_index(row["Concept_Current"])]
+    path_ids = order[:cur_pos + 1]
+    names = [C.concept_name(c) for c in path_ids]
+    cm = float(row["Current_Mastery"])
+    n = len(path_ids)
+    ramp = [round(cm * (i + 1) / n, 3) for i in range(n)]  # smooth ramp to current
+    fig = go.Figure(go.Scatter(x=list(range(n)), y=ramp, mode="lines+markers",
+                               line=dict(color=COLORS["primary"], width=2.5),
+                               marker=dict(size=7, color=COLORS["primary_hover"]),
+                               text=names, hovertemplate="%{text}<br>mastery %{y:.2f}<extra></extra>"))
+    fig.update_layout(xaxis_title="Concepts completed (in order)", yaxis_title="Mastery")
+    return _base(fig, title="Progress Timeline")
+
+
+def epsilon_explore_pie_figure(epsilon: float) -> go.Figure:
+    """P4: explore vs exploit split implied by the chosen epsilon."""
+    fig = go.Figure(go.Pie(
+        labels=["Exploit", "Explore"], values=[1 - epsilon, epsilon], hole=0.6,
+        marker=dict(colors=[COLORS["ink_subtle"], COLORS["primary_hover"]]),
+        textinfo="label+percent", sort=False,
+    ))
+    return _base(fig, height=360, title=f"Explore vs Exploit (ε = {epsilon:.2f})")
+
+
+def learning_speed_area_figure(df: pd.DataFrame) -> go.Figure:
+    """P6: mastery-growth distribution as a filled area per learning speed."""
+    bins = np.linspace(0, 1, 21)
+    centers = (bins[:-1] + bins[1:]) / 2
+    fig = go.Figure()
+    palette = {
+        "Slow": (COLORS["ink_subtle"], "rgba(138,143,152,0.18)"),
+        "Average": (COLORS["primary"], "rgba(94,106,210,0.18)"),
+        "Fast": (COLORS["primary_hover"], "rgba(130,143,255,0.18)"),
+    }
+    for speed in ["Slow", "Average", "Fast"]:
+        sub = df[df["Learning_Speed"] == speed]["Mastery_Growth"]
+        counts, _ = np.histogram(sub, bins=bins)
+        line_c, fill_c = palette[speed]
+        fig.add_trace(go.Scatter(x=centers, y=counts, mode="lines", name=speed,
+                                 line=dict(color=line_c, width=2), fill="tozeroy",
+                                 fillcolor=fill_c))
+    fig.update_layout(xaxis_title="Mastery growth", yaxis_title="Students",
+                      legend=dict(orientation="h"))
+    return _base(fig, title="Learning Speed Distribution")
+
+
+def cohort_comparison_figure(df: pd.DataFrame) -> go.Figure:
+    """P6: current-mastery spread per difficulty-preference cohort (box plot)."""
+    fig = go.Figure()
+    for i, pref in enumerate(["Easy", "Medium", "Hard"]):
+        sub = df[df["Difficulty_Preference"] == pref]["Current_Mastery"]
+        fig.add_trace(go.Box(y=sub, name=pref, marker_color=CHART_SEQUENCE[i],
+                             boxmean=True))
+    fig.update_layout(xaxis_title="Difficulty preference", yaxis_title="Current mastery",
+                      showlegend=False)
+    return _base(fig, title="Cohort Comparison")
+
+
+def mastery_by_track_figure(df: pd.DataFrame) -> go.Figure:
+    """P6: mean current mastery by curriculum track (horizontal bar)."""
+    track_of = {c["id"]: c["track"] for c in C.CONCEPTS}
+    tmp = df.copy()
+    tmp["_track"] = tmp["Concept_Current"].map(lambda n: track_of[C.concept_index(n)])
+    grouped = tmp.groupby("_track")["Current_Mastery"].mean().reindex(_TRACKS)
+    fig = go.Figure(go.Bar(
+        x=grouped.values, y=grouped.index, orientation="h",
+        marker_color=CHART_SEQUENCE[:len(grouped)],
+        text=[f"{v:.2f}" for v in grouped.values], textposition="outside",
+    ))
+    fig.update_layout(xaxis_title="Mean current mastery", yaxis_title="Track")
+    return _base(fig, title="Mastery by Track")
+
+
+def mcdm_weight_radar_figure(weights: dict[str, float]) -> go.Figure:
+    """P7: the current MCDM weight vector as a radar."""
+    total = sum(weights.values()) or 1.0
+    vals = [weights[c] / total for c in MCDM_CRITERIA]
+    fig = go.Figure(go.Scatterpolar(
+        r=vals + [vals[0]], theta=MCDM_CRITERIA + [MCDM_CRITERIA[0]], fill="toself",
+        line=dict(color=COLORS["primary"]), fillcolor="rgba(94,106,210,0.25)",
+    ))
+    fig.update_layout(polar=dict(
+        bgcolor="rgba(0,0,0,0)",
+        radialaxis=dict(range=[0, max(vals) * 1.2 if vals else 1], gridcolor=COLORS["hairline"],
+                        tickfont=dict(color=COLORS["ink_subtle"])),
+        angularaxis=dict(gridcolor=COLORS["hairline"], tickfont=dict(color=COLORS["ink_muted"])),
+    ))
+    return _base(fig, height=400, title="MCDM Weight Distribution")
+
+
+def correlation_heatmap_figure(df: pd.DataFrame) -> go.Figure:
+    """P8: pairwise correlations among the dataset's numeric features."""
+    cols = ["Age", "Prior_Knowledge", "Current_Mastery", "Quiz_Score",
+            "Assignment_Score", "Study_Time_Hours", "Interest_Level",
+            "Mastery_Growth", "Completion_Time"]
+    corr = df[cols].corr().round(2)
+    short = [c.replace("_", " ") for c in cols]
+    fig = go.Figure(go.Heatmap(
+        z=corr.values, x=short, y=short, zmin=-1, zmax=1,
+        colorscale=[[0.0, COLORS["danger"]], [0.5, COLORS["surface_2"]],
+                    [1.0, COLORS["primary"]]],
+        colorbar=dict(title="r"),
+        hovertemplate="%{y} × %{x}<br>r = %{z:.2f}<extra></extra>",
+    ))
+    fig.update_layout(xaxis=dict(tickangle=-45))
+    return _base(fig, height=560, title="Metric Correlations")
+
+
+def metrics_training_figure(history: dict) -> go.Figure:
+    """P8: trackable training signals over episodes (reward, epsilon, objective rate)."""
+    rewards = np.asarray(history["episode_rewards"], dtype=float)
+    window = max(10, len(rewards) // 50)
+    ma = _moving_average(rewards, window)
+    norm_reward = (ma - ma.min()) / (ma.ptp() + 1e-9)
+    eps = np.asarray(history["epsilon_curve"], dtype=float)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=np.arange(window - 1, window - 1 + len(norm_reward)),
+                             y=norm_reward, mode="lines", name="Reward (normalised MA)",
+                             line=dict(color=COLORS["primary"], width=2.5)))
+    fig.add_trace(go.Scatter(y=eps, mode="lines", name="Epsilon",
+                             line=dict(color=COLORS["warning"], width=2)))
+    fig.update_layout(xaxis_title="Episode", yaxis_title="Normalised signal",
+                      legend=dict(orientation="h"))
+    return _base(fig, title="Training Signals Over Time")

@@ -147,6 +147,13 @@ def model_ready() -> bool:
     return get_bundle() is not None
 
 
+def _active_learner_count(df: pd.DataFrame) -> int:
+    """Students mid-curriculum: past the first concept, not yet at the objective."""
+    first = C.concept_name(0)
+    objective = C.concept_name(C.OBJECTIVE_CONCEPT_ID)
+    return int((~df["Concept_Current"].isin([first, objective])).sum())
+
+
 def training_status_badge() -> str:
     bundle = get_bundle()
     if bundle is None:
@@ -188,12 +195,21 @@ def page_overview(df: pd.DataFrame) -> None:
                 unsafe_allow_html=True)
 
     st.markdown("###")
+    active = _active_learner_count(df)
+    completion = "—"
+    if model_ready():
+        completion = f"{cached_metrics(get_bundle()['metadata']['trained_at'])['Path Completion Rate']*100:.0f}%"
     render_kpis([
-        ("Students", f"{len(df):,}", "synthetic, seed 42"),
-        ("Concepts", f"{C.NUM_CONCEPTS}", "canonical DAG"),
-        ("State space", f"{state_space_size()}", "24 × 4 × 3"),
-        ("Objective", C.concept_name(C.OBJECTIVE_CONCEPT_ID), "terminal concept", True),
+        ("Total students", f"{len(df):,}", "synthetic, seed 42"),
+        ("Active learners", f"{active:,}", "mid-curriculum"),
+        ("Avg mastery", f"{df['Current_Mastery'].mean():.2f}", "across cohort"),
+        ("Path completion", completion, "greedy → objective", True),
     ])
+
+    st.markdown("## Learning overview")
+    oc1, oc2 = st.columns(2)
+    oc1.plotly_chart(charts.mastery_histogram_figure(df), use_container_width=True)
+    oc2.plotly_chart(charts.learning_overview_figure(df), use_container_width=True)
 
     st.markdown("## The four RDMU concepts")
     c1, c2 = st.columns(2)
@@ -279,10 +295,26 @@ def page_student_profile(df: pd.DataFrame) -> None:
         ("Mastery growth", f"{row['Mastery_Growth']:.2f}"),
     ])
 
-    st.markdown("### Position in the curriculum")
-    st.caption("The student's current concept is highlighted in lavender.")
-    st.plotly_chart(charts.concept_graph_figure(get_graph(), highlight=current_id),
-                    use_container_width=True)
+    st.markdown("### Learning profile")
+    pc1, pc2 = st.columns(2)
+    pc1.plotly_chart(charts.mastery_radar_figure(row), use_container_width=True)
+    pc2.plotly_chart(charts.progress_timeline_figure(row), use_container_width=True)
+
+    st.markdown("### Concept completion history")
+    order = C.topological_order()
+    cur_pos = C.topological_position()[current_id]
+    history_rows = []
+    for cid in order[:cur_pos]:
+        history_rows.append({"Concept": C.concept_name(cid),
+                             "Track": C.concept_by_id(cid)["track"],
+                             "Difficulty": f"{C.difficulty_of(cid)}/5",
+                             "Status": "Completed"})
+    history_rows.append({"Concept": row["Concept_Current"],
+                         "Track": C.concept_by_id(current_id)["track"],
+                         "Difficulty": f"{C.difficulty_of(current_id)}/5",
+                         "Status": f"In progress · {m_band}"})
+    st.dataframe(pd.DataFrame(history_rows), hide_index=True, use_container_width=True,
+                 height=280)
 
 
 def page_concept_graph(df: pd.DataFrame) -> None:
@@ -318,6 +350,19 @@ def page_concept_graph(df: pd.DataFrame) -> None:
                 unsafe_allow_html=True)
         else:
             st.info("Select a concept above to see its prerequisites and what it unlocks.")
+
+
+def _recommendation_confidence(rec) -> float:
+    """Softmax probability mass on the top RL candidate — a confidence proxy."""
+    import numpy as np
+
+    qs = np.array([q for _, q in rec.rl_ranking], dtype=float)
+    if qs.size == 0:
+        return 0.0
+    if qs.size == 1:
+        return 1.0
+    e = np.exp(qs - qs.max())
+    return float((e / e.sum()).max())
 
 
 def _render_recommendation(rec, weights) -> None:
@@ -368,7 +413,12 @@ def page_recommendation(df: pd.DataFrame) -> None:
         return
 
     weights = ensure_weights()
-    row = _student_selector(df, key="reco_select")
+    sel_col, eps_col = st.columns([2, 2])
+    with sel_col:
+        row = _student_selector(df, key="reco_select")
+    with eps_col:
+        epsilon = st.slider("Exploration rate ε", 0.0, 1.0,
+                            HYPERPARAMS["epsilon"]["default"], 0.01, key="reco_epsilon")
     student, current_id, mastery = profile_from_row(row)
 
     st.markdown(
@@ -381,12 +431,25 @@ def page_recommendation(df: pd.DataFrame) -> None:
 
     bundle = get_bundle()
     rec = recommend(bundle["q_table"], new_env(), student, current_id, mastery, weights)
+
+    # 3 KPIs: recommended next concept, exploration %, confidence (Q-softmax margin).
+    confidence = _recommendation_confidence(rec)
+    next_name = C.concept_name(rec.final_concept) if rec.final_concept is not None else "—"
+    render_kpis([
+        ("Recommended next concept", next_name, "MCDM winner", True),
+        ("Exploration", f"{epsilon*100:.0f}%", f"exploit {100-epsilon*100:.0f}%"),
+        ("Confidence", f"{confidence*100:.0f}%", "Q-value margin"),
+    ], per_row=3)
+
     _render_recommendation(rec, weights)
 
-    st.markdown("### Where it leads")
-    st.plotly_chart(
-        charts.concept_graph_figure(get_graph(), highlight=rec.final_concept),
-        use_container_width=True)
+    bl, br = st.columns([2, 3])
+    bl.plotly_chart(charts.epsilon_explore_pie_figure(epsilon), use_container_width=True)
+    with br:
+        st.markdown("### Where it leads")
+        st.plotly_chart(
+            charts.concept_graph_figure(get_graph(), highlight=rec.final_concept),
+            use_container_width=True)
 
 
 def page_rl_policy(df: pd.DataFrame) -> None:
@@ -394,21 +457,18 @@ def page_rl_policy(df: pd.DataFrame) -> None:
     st.title("RL Policy & Training")
 
     with st.expander("⚙️ Train / Retrain the Q-learning agent", expanded=not model_ready()):
-        c1, c2, c3, c4 = st.columns(4)
+        alpha = HYPERPARAMS["alpha"]["default"]
+        gamma = HYPERPARAMS["gamma"]["default"]
+        c1, c2 = st.columns(2)
         episodes = c1.slider("Episodes", HYPERPARAMS["episodes"]["min"],
                              HYPERPARAMS["episodes"]["max"], HYPERPARAMS["episodes"]["default"],
                              HYPERPARAMS["episodes"]["step"])
-        alpha = c2.slider("Learning rate α", HYPERPARAMS["alpha"]["min"],
-                          HYPERPARAMS["alpha"]["max"], HYPERPARAMS["alpha"]["default"],
-                          HYPERPARAMS["alpha"]["step"])
-        gamma = c3.slider("Discount γ", HYPERPARAMS["gamma"]["min"],
-                          HYPERPARAMS["gamma"]["max"], HYPERPARAMS["gamma"]["default"],
-                          HYPERPARAMS["gamma"]["step"])
-        epsilon = c4.slider("Epsilon floor ε", HYPERPARAMS["epsilon"]["min"],
+        epsilon = c2.slider("Epsilon floor ε", HYPERPARAMS["epsilon"]["min"],
                             HYPERPARAMS["epsilon"]["max"], HYPERPARAMS["epsilon"]["default"],
                             HYPERPARAMS["epsilon"]["step"])
-        st.caption("Epsilon starts at 1.0 (full exploration) and decays linearly to the "
-                   "floor over the first 60% of episodes.")
+        st.caption(f"Learning rate α = {alpha} and discount γ = {gamma} are held constant "
+                   "(per the design spec). Epsilon starts at 1.0 (full exploration) and "
+                   "decays linearly to the floor over the first 60% of episodes.")
         if st.button("🚀 Train / Retrain", type="primary"):
             run_training(episodes, alpha, gamma, epsilon)
             st.rerun()
@@ -446,12 +506,17 @@ def page_mastery_analytics(df: pd.DataFrame) -> None:
         ("Mean study time", f"{df['Study_Time_Hours'].mean():.1f} h"),
         ("Mean completion time", f"{df['Completion_Time'].mean():.1f} h"),
     ])
+
+    st.markdown("### Mastery over time")
+    row = _student_selector(df, key="analytics_select")
+    st.plotly_chart(charts.progress_timeline_figure(row), use_container_width=True)
+
     c1, c2 = st.columns(2)
-    c1.plotly_chart(charts.mastery_progress_figure(df), use_container_width=True)
-    c2.plotly_chart(charts.mastery_growth_vs_study_figure(df), use_container_width=True)
+    c1.plotly_chart(charts.mastery_by_track_figure(df), use_container_width=True)
+    c2.plotly_chart(charts.cohort_comparison_figure(df), use_container_width=True)
     c3, c4 = st.columns(2)
-    c3.plotly_chart(charts.satisfaction_figure(df), use_container_width=True)
-    c4.plotly_chart(charts.difficulty_distribution_figure(df), use_container_width=True)
+    c3.plotly_chart(charts.learning_speed_area_figure(df), use_container_width=True)
+    c4.plotly_chart(charts.satisfaction_figure(df), use_container_width=True)
 
 
 def page_mcdm_settings(df: pd.DataFrame) -> None:
@@ -472,7 +537,7 @@ def page_mcdm_settings(df: pd.DataFrame) -> None:
     st.session_state["mcdm_weights"] = new_weights
 
     cc1, cc2 = st.columns([1, 3])
-    if cc1.button("↺ Reset to equal weights"):
+    if cc1.button("↺ Reset to default weights"):
         st.session_state["mcdm_weights"] = dict(MCDM_DEFAULT_WEIGHTS)
         st.rerun()
     total = sum(new_weights.values())
@@ -480,6 +545,17 @@ def page_mcdm_settings(df: pd.DataFrame) -> None:
         f'<div style="padding-top:8px;color:#8a8f98">Normalised: ' +
         " · ".join(f"{c} {(w/total if total else 0):.0%}" for c, w in new_weights.items()) +
         "</div>", unsafe_allow_html=True)
+
+    wl, wr = st.columns([2, 3])
+    wl.plotly_chart(charts.mcdm_weight_radar_figure(new_weights), use_container_width=True)
+    wr.markdown(
+        '<div class="linear-card" style="margin-top:20px"><b>How it works</b>'
+        '<div style="color:#d0d6e0;margin-top:8px;font-size:14px;line-height:1.6">'
+        'The RL agent shortlists the top-k next concepts by Q-value. Each criterion '
+        'above is scored per candidate, min-max normalised, oriented (e.g. lower '
+        'difficulty scores higher), then combined with these weights. The highest '
+        'weighted score becomes the final recommendation below.</div></div>',
+        unsafe_allow_html=True)
 
     st.divider()
     if not model_ready():
@@ -513,7 +589,7 @@ def page_metrics(df: pd.DataFrame) -> None:
         ("Policy stability", f"{metrics['Policy Stability']*100:.0f}%", "last checkpoints", True),
         ("Path completion", f"{metrics['Path Completion Rate']*100:.0f}%", "reach objective"),
         ("Reco. accuracy", f"{metrics['Recommendation Accuracy']*100:.0f}%", "RL≡MCDM proxy"),
-        ("Satisfaction", f"{metrics['Student Satisfaction']:.2f}", "preference match"),
+        ("Satisfaction", f"{metrics['Student Satisfaction']:.2f} / 5", "preference match"),
     ])
 
     with st.expander("📖 Metric definitions"):
@@ -532,8 +608,17 @@ def page_metrics(df: pd.DataFrame) -> None:
             "recommendations.")
 
     c1, c2 = st.columns(2)
-    c1.plotly_chart(charts.reward_curve_figure(bundle["history"]), use_container_width=True)
+    c1.plotly_chart(charts.metrics_training_figure(bundle["history"]), use_container_width=True)
     c2.plotly_chart(charts.policy_evolution_figure(bundle["history"]), use_container_width=True)
+
+    st.plotly_chart(charts.correlation_heatmap_figure(df), use_container_width=True)
+
+    st.markdown("### Detailed student metrics")
+    detail = df[["Student_ID", "Concept_Current", "Current_Mastery", "Mastery_Growth",
+                 "Study_Time_Hours", "Completion_Time", "Interest_Level"]].copy()
+    detail["Efficiency"] = (detail["Mastery_Growth"] /
+                            detail["Study_Time_Hours"].clip(lower=0.1)).round(3)
+    st.dataframe(detail, hide_index=True, use_container_width=True, height=360)
 
 
 # ===========================================================================

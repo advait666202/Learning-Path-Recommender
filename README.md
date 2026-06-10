@@ -39,11 +39,11 @@ candidates (prerequisites satisfied, not already completed).
 
 | Component | Weight |
 |---|---|
-| mastery_gain | 0.35 |
-| difficulty_suitability | 0.25 |
-| preference_match | 0.15 |
-| time_efficiency | 0.15 |
-| completion_speed | 0.10 |
+| mastery_gain | 0.30 |
+| completion_speed | 0.20 |
+| preference_match | 0.20 |
+| difficulty_suitability | 0.20 |
+| time_efficiency | 0.10 |
 
 **Transition** — after studying a concept, mastery moves up a band with a
 probability that rises with difficulty suitability and study time; that
@@ -51,11 +51,13 @@ probability is **calibrated from the dataset** (mean `Mastery_Growth` per
 study-time band, `rl/environment.Calibration`).
 
 **Default hyperparameters** — epsilon floor `0.1` (decays from `1.0`), learning
-rate `α = 0.1`, discount `γ = 0.9`, `5000` episodes. All adjustable from the
-*RL Policy* page and the `rl/train.py` CLI.
+rate `α = 0.1`, discount `γ = 0.9`, `2000` episodes. Per the design spec, only
+**epsilon and episodes** are user-adjustable (episodes slider `100–5000`); α and
+γ are held constant. The *RL Policy* page and the `rl/train.py` CLI expose them.
 
-**MCDM criteria** (equal `0.20` default weights, user-adjustable): Mastery Goal,
-Difficulty, Time Available, Student Interest, Expected Learning Gain.
+**MCDM criteria** (user-adjustable, defaults from the design spec): Mastery Goal
+`0.30`, Difficulty `0.20`, Time Available `0.20`, Student Interest `0.15`,
+Expected Learning Gain `0.15`.
 
 ---
 
@@ -130,15 +132,20 @@ streamlit run app.py
 
 ### Metrics (precise definitions)
 
-* **Learning Efficiency** — mastery gained per study hour.
-* **Mastery Rate** — % of students at/above the Proficient band.
+* **Learning Efficiency** — total mastery gained per total study hour invested
+  across the cohort (`sum(Mastery_Growth) / sum(Study_Time_Hours)`).
+* **Mastery Rate** — % of students who have mastered at least 50% of the
+  concepts. The dataset stores one current concept per student; since advancing
+  past a concept implies mastering it, the mastered fraction is proxied by the
+  student's topological position over the curriculum (≥ 0.5 counts).
 * **Average Reward** — mean episodic reward during training.
 * **Policy Stability** — % of states whose greedy action is unchanged across the
   last training checkpoints.
 * **Path Completion Rate** — % of greedy simulated paths reaching the objective.
 * **Recommendation Accuracy** — % agreement between the greedy RL action and the
   MCDM-optimal action (a stated proxy; no external ground truth exists).
-* **Student Satisfaction** — preference-match reward component, aggregated.
+* **Student Satisfaction** — preference-match reward component, reported on a
+  1–5 scale.
 
 ---
 

@@ -69,21 +69,23 @@ def state_space_size() -> int:
 # MDP reward weights (sum to 1.0). Exposed so the trainer/dashboard agree.
 # ---------------------------------------------------------------------------
 REWARD_WEIGHTS: dict[str, float] = {
-    "mastery_gain": 0.35,
-    "difficulty_suitability": 0.25,
-    "preference_match": 0.15,
-    "time_efficiency": 0.15,
-    "completion_speed": 0.10,
+    "mastery_gain": 0.30,
+    "completion_speed": 0.20,
+    "preference_match": 0.20,
+    "difficulty_suitability": 0.20,
+    "time_efficiency": 0.10,
 }
 
 # ---------------------------------------------------------------------------
 # Q-learning hyperparameters: defaults + UI slider ranges (min, max, step).
 # ---------------------------------------------------------------------------
+# Per the design spec, only epsilon and episodes are user-adjustable; alpha and
+# gamma are held constant.
 HYPERPARAMS = {
     "epsilon": {"default": 0.10, "min": 0.0, "max": 1.0, "step": 0.01},
     "alpha":   {"default": 0.10, "min": 0.01, "max": 1.0, "step": 0.01},
     "gamma":   {"default": 0.90, "min": 0.50, "max": 0.999, "step": 0.001},
-    "episodes": {"default": 5000, "min": 500, "max": 20000, "step": 500},
+    "episodes": {"default": 2000, "min": 100, "max": 5000, "step": 100},
 }
 
 # Epsilon is decayed linearly from EPSILON_START to the chosen floor across
@@ -122,7 +124,14 @@ MCDM_CRITERIA: list[str] = [
     "Student Interest",
     "Expected Learning Gain",
 ]
-MCDM_DEFAULT_WEIGHTS: dict[str, float] = {c: 0.20 for c in MCDM_CRITERIA}
+# Non-equal defaults per the design spec (user-adjustable on the MCDM page).
+MCDM_DEFAULT_WEIGHTS: dict[str, float] = {
+    "Mastery Goal": 0.30,
+    "Difficulty": 0.20,
+    "Time Available": 0.20,
+    "Student Interest": 0.15,
+    "Expected Learning Gain": 0.15,
+}
 MCDM_DIRECTION: dict[str, int] = {
     "Mastery Goal": +1,            # concepts that close the gap to the goal score higher
     "Difficulty": -1,             # gentler difficulty preferred (re-weightable)
@@ -153,16 +162,17 @@ COLORS = {
     "hairline": "#23252a",
     "hairline_strong": "#34343a",
     "success": "#27a644",
+    "warning": "#e5a50a",
+    "danger": "#e5484d",
 }
 
-# Ordered categorical palette for charts (lavender-anchored, Linear-respecting:
-# the lavender is the hero, the rest are muted blue-grey steps + the one success
-# green, so we never introduce a second saturated chromatic accent).
+# Ordered categorical palette for charts — the design spec's colorway:
+# lavender hero + hover, then the three semantic colors and a neutral.
 CHART_SEQUENCE: list[str] = [
-    "#5e6ad2",  # lavender (primary)
-    "#828fff",  # lavender hover
-    "#7a7fad",  # brand secure (muted lavender-grey)
-    "#8a8f98",  # ink subtle
-    "#27a644",  # success green (semantic only)
-    "#d0d6e0",  # ink muted
+    COLORS["primary"],        # lavender
+    COLORS["primary_hover"],  # lavender hover
+    COLORS["success"],        # green
+    COLORS["warning"],        # amber
+    COLORS["danger"],         # red
+    COLORS["ink_subtle"],     # neutral grey
 ]

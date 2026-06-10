@@ -31,15 +31,28 @@ from utils.recommender import (
 # Dataset-derived metrics.
 # ---------------------------------------------------------------------------
 def learning_efficiency(df: pd.DataFrame) -> float:
-    """Mastery gained per study hour: mean(Mastery_Growth / Study_Time_Hours)."""
-    eff = df["Mastery_Growth"] / df["Study_Time_Hours"].clip(lower=0.1)
-    return float(eff.mean())
+    """
+    Total mastery gained per total study hour invested across the cohort
+    (aggregate ratio, per the design spec):
+        sum(Mastery_Growth) / sum(Study_Time_Hours).
+    """
+    total_hours = float(df["Study_Time_Hours"].sum())
+    return float(df["Mastery_Growth"].sum() / total_hours) if total_hours else 0.0
 
 
 def mastery_rate(df: pd.DataFrame) -> float:
-    """% of students whose Current_Mastery reaches at least the target band."""
-    bands = df["Current_Mastery"].apply(discretize_mastery)
-    return float((bands >= TARGET_MASTERY_BAND_INDEX).mean())
+    """
+    % of students who have mastered at least 50% of the concepts.
+
+    The dataset records one current concept per student; advancing past a
+    concept implies mastering it, so the fraction mastered is approximated by
+    the student's topological position over the curriculum. A student counts
+    when that fraction is >= 0.5 (proxy stated in the README).
+    """
+    pos = C.topological_position()
+    fracs = df["Concept_Current"].map(
+        lambda n: pos[C.concept_index(n)] / (C.NUM_CONCEPTS - 1))
+    return float((fracs >= 0.5).mean())
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +126,7 @@ def student_satisfaction(q_table: np.ndarray, env: StudentEnv, df: pd.DataFrame,
                          n_samples: int = 300, seed: int = RANDOM_SEED) -> float:
     """
     Mean preference-match component of the greedy RL recommendation across real
-    sampled students (the reward model's "satisfaction" signal aggregated).
+    sampled students, reported on a 1–5 satisfaction scale (per the design spec).
     """
     vals = []
     for _, row in _sample_rows(df, n_samples, seed).iterrows():
@@ -124,7 +137,8 @@ def student_satisfaction(q_table: np.ndarray, env: StudentEnv, df: pd.DataFrame,
             continue
         rl_action = rank_by_q(q_table, state, valid)[0][0]
         vals.append(env.preference_match(rl_action, student))
-    return float(np.mean(vals)) if vals else 0.0
+    mean_match = float(np.mean(vals)) if vals else 0.0
+    return 1.0 + 4.0 * mean_match  # map [0,1] preference match -> [1,5] scale
 
 
 def compute_all(df: pd.DataFrame, bundle: dict, env: StudentEnv,
